@@ -1,0 +1,793 @@
+---
+title: "Programming_Indiv_Car"
+output: html_document
+date: "2024-12-02"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+```{r}
+library(readr)
+library(tidyr)
+library(sf)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(scales)
+library(reshape2)
+
+```
+
+```{r}
+
+# Install XGBoost and supporting packages
+install.packages("xgboost")        # XGBoost implementation
+install.packages("caret")          # Model training and hyperparameter tuning
+install.packages("dplyr")          # Data manipulation
+install.packages("lubridate")      # Date-time handling
+install.packages("ggplot2")        # Visualization
+install.packages("zoo")            # Rolling averages and standard deviations
+
+# Install ARIMA and supporting packages
+install.packages("forecast")  # ARIMA modeling 
+install.packages("tseries")   # ADF test and 
+install.packages("seastests") # Seasonal testing
+install.packages("ggmap")
+```
+
+
+```{r cars}
+# Download the dataset from GitHub
+url <- "https://raw.githubusercontent.com/fongbubble/UoB_MGRCM0034_Car_Sales/main/car_sales.csv"
+csv_file_path <- tempfile(fileext = ".csv")
+download.file(url, destfile = csv_file_path)
+print(paste("CSV File Path:", csv_file_path))
+
+# Read the CSV file
+df <- read_csv(csv_file_path)
+head(df, 10)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+nan_check <- colSums(is.na(df))
+print(nan_check)
+```
+```{r}
+#check duplicated rows
+duplicated_rows <- sum(duplicated(df))
+print(duplicated_rows)
+```
+```{r}
+head(df,10)
+```
+
+
+```{r}
+# Replace '5-Sep' with '9-5' and '3-Sep' with '9-3' in the 'Model' column using mutate
+df <- df %>%
+  mutate(Model = gsub('5-Sep', '9-5', gsub('3-Sep', '9-3', Model)))
+```
+
+
+```{r}
+head(df, 10)
+```
+```{r}
+
+summary_table <- df %>%
+  summarise_if(is.numeric, list(
+    Mean = ~mean(., na.rm = TRUE),
+    Median = ~median(., na.rm = TRUE),
+    Min = ~min(., na.rm = TRUE),
+    Max = ~max(., na.rm = TRUE),
+    SD = ~sd(., na.rm = TRUE)
+  )) %>%
+  pivot_longer(cols = everything(), 
+               names_to = c("Variable", ".value"), 
+               names_sep = "_")
+# Print the summary table
+print(summary_table)
+
+```
+
+
+
+
+
+```{r}
+# Convert the 'Date' column to Date type
+df$Date <- as.Date(df$Date, format = "%m/%d/%Y")
+
+# Filter the data for the years 2022 and 2023
+data_2022 <- df[format(df$Date, "%Y") == "2022", ]
+data_2023 <- df[format(df$Date, "%Y") == "2023", ]
+
+# Calculate the total sum of 'Price ($)' for 2022 and 2023
+total_price_2022 <- sum(data_2022$`Price ($)`, na.rm = TRUE)
+total_price_2023 <- sum(data_2023$`Price ($)`, na.rm = TRUE)
+
+
+
+# Calculate the percentage difference between the two years
+percent_difference <- ((total_price_2023 - total_price_2022) / total_price_2022) * 100
+```
+
+
+
+```{r}
+
+# Print the results
+cat(sprintf("Total sum of prices in 2022: $%.2f\n", total_price_2022))
+cat(sprintf("Total sum of prices in 2023: $%.2f\n", total_price_2023))
+cat(sprintf("Percentage difference between 2022 and 2023: %.2f%%\n", percent_difference))
+```
+```{r}
+head(df,10)
+```
+
+
+```{r}
+df_month_price <- df %>% select(Month, Price)
+head(df_month_price,5)
+```
+
+
+```{r}
+# Assuming `df` is a data frame with columns `Date` (as Date class) and `Price`
+# Convert 'Date' to monthly period and calculate monthly sum of prices
+df$Month <- floor_date(df$Date, "month")  # Add a new 'Month' column with the monthly floor date
+colnames(df)[colnames(df) == "Price ($)"] <- "Price"
+# Aggregate the data by 'Month' and sum the 'Price'
+monthly_sum_price <- aggregate(Price ~ Month, data = df, sum)
+
+# Rename the aggregated column for clarity (if needed)
+colnames(monthly_sum_price) <- c("Month", "Price")
+
+
+# Ensure all months in the data range are shown on the x-axis
+all_months <- seq(from = min(monthly_sum_price$Month),
+                  to = max(monthly_sum_price$Month),
+                  by = "month")
+
+# Create the trendline using linear regression
+x <- seq_along(monthly_sum_price$Month)  # Numeric values for months
+y <- monthly_sum_price$`Price`      # Total sales
+
+
+```
+
+```{r}
+trend <- lm(y ~ x)                      # Linear regression model
+trendline <- predict(trend)             # Create trendline values
+
+#Combine the data and trendline into a data frame for plotting
+plot_data <- cbind(
+  Month = monthly_sum_price$Month,
+  Price = monthly_sum_price$`Price`,
+  Trendline = trendline
+)
+
+plot_data <- as.data.frame(plot_data)
+```
+
+
+```{r}
+ggplot(plot_data, aes(x = Month)) +
+  # Line for Total Sales
+  geom_line(aes(y = Price, color = "Total Sales"), size = 1) +
+  # Points for Total Sales
+  geom_point(aes(y = Price), color = "#3288BD", size = 2) +
+  
+  # Trendline
+  geom_line(aes(y = Trendline, color = "Trendline"), linetype = "dashed", size = 1) +
+  # Labels for Total Sales points
+  geom_text(aes(y = Price, label = scales::dollar(Price, prefix = "$", big.mark = ",")),
+            vjust = -1, size = 3, color = "black") +
+  # Custom colors for legend
+  scale_color_manual(values = c("Total Sales" = "#3288BD", "Trendline" = "red")) +
+  # Title and labels
+  labs(
+    title = "Monthly Total Sales Trend",
+    x = "Months",
+    y = "Total Sales ($)",
+    color = "Legend"
+  )
+
+
+```
+
+
+```{r}
+# Convert columns to ensure proper types
+plot_data$Month <- as.Date(plot_data$Month)  # Ensure Month is a Date
+plot_data$Price <- as.numeric(plot_data$Price)  # Ensure Price is numeric
+plot_data$Trendline <- as.numeric(plot_data$Trendline)  # Ensure Trendline is numeric
+
+# Create the plot
+ggplot(data = plot_data, aes(x = Month)) +
+  # Line for Total Sales
+  geom_line(aes(y = Price), color = "#3288BD", size = 1) +
+  # Points for Total Sales
+  geom_point(aes(y = Price), color = "#3288BD", size = 3) +
+  # Trendline
+  geom_line(aes(y = Trendline), color = "red", linetype = "dashed", size = 1) +
+  # Title and axis labels
+  labs(
+    title = "Monthly Total Sales Trend",
+    x = "Months",
+    y = "Total Sales ($)"
+  ) +
+  # Y-axis formatting for dollar amounts
+  scale_y_continuous(labels = function(x) paste0("$", format(x, big.mark = ",", scientific = FALSE))) +
+  # X-axis formatting to show every month
+  scale_x_date(
+    breaks = seq(from = min(plot_data$Month), to = max(plot_data$Month), by = "1 month"),
+    date_labels = "%Y-%m"
+  ) +
+  # Theme similar to Python plot
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major = element_line(color = "gray80", linetype = "dotted"),
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.margin = margin(10, 20, 10, 10),  # Add margin for clarity
+    legend.position = "top",  # Move legend to the top
+    legend.title = element_blank()
+  )
+```
+
+
+```{r}
+# Ensure 'Date' column is in Date format
+df$Date <- as.Date(df$Date)
+
+# Extract month and year
+df$Month <- month(df$Date)  # Extract month (1-12)
+df$Year <- year(df$Date)    # Extract year
+
+# Group by Month and Year, then sum 'Price'
+monthly_sale <- df %>%
+  group_by(Month, Year) %>%
+  summarize(`Price` = sum(Price, na.rm = TRUE)) %>%
+  ungroup()
+
+# Group by Month only and sum across years
+sum_by_month <- monthly_sale %>%
+  group_by(Month) %>%
+  summarize(`Price` = sum(Price, na.rm = TRUE)) %>%
+  ungroup()
+
+# Calculate total price
+total_price <- sum(df$Price, na.rm = TRUE)
+
+# Calculate seasonal index
+sum_by_month <- sum_by_month %>%
+  mutate(`Seasonal Index` = Price / (total_price / 12))
+
+# View the result
+print(sum_by_month)
+```
+
+```{r}
+# Ensure Month is treated as a factor for better x-axis labeling
+sum_by_month$Month <- factor(sum_by_month$Month, levels = 1:12, labels = month.abb)
+
+# Plot the seasonal index
+ggplot(sum_by_month, aes(x = Month, y = `Seasonal Index`)) +
+  geom_line(color = "#3288BD", size = 1) +  # Line for seasonal index
+  geom_point(color = "#3288BD", size = 3) + # Points on the line
+  geom_hline(yintercept = 1, color = "#FDDA0D", linetype = "dashed", size = 1) +  # Reference line at 1
+  labs(
+    title = "Seasonal Index by Month",
+    x = "Month",
+    y = "Seasonal Index"
+  ) +
+  scale_y_continuous(limits = c(0.2, NA), breaks = seq(0.2, max(sum_by_month$`Seasonal Index`) + 0.2, by = 0.2)) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    axis.text.x = element_text(color = "black", size = 12),
+    axis.text.y = element_text(color = "black", size = 12),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    panel.grid.major = element_line(color = "gray80", linetype = "dotted"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+
+```{r}
+# Ensure Month is treated as a factor for better x-axis labeling
+sum_by_month$Month <- factor(sum_by_month$Month, levels = 1:12, labels = month.abb)
+
+# Plot the seasonal index
+ggplot(sum_by_month, aes(x = Month, y = `Seasonal Index`, group = 1)) +  # Group = 1 ensures the line connects points
+  geom_line(color = "#3288BD", size = 1) +  # Line for seasonal index
+  geom_point(color = "#3288BD", size = 3) + # Points on the line
+  geom_hline(yintercept = 1, color = "#FDDA0D", linetype = "dashed", size = 1) +  # Reference line at 1
+  labs(
+    title = "Seasonal Index by Month",
+    x = "Month",
+    y = "Seasonal Index"
+  ) +
+  scale_y_continuous(limits = c(0.2, NA), breaks = seq(0.2, max(sum_by_month$`Seasonal Index`) + 0.2, by = 0.2)) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    axis.text.x = element_text(color = "black", size = 12),
+    axis.text.y = element_text(color = "black", size = 12),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    panel.grid.major = element_line(color = "gray80", linetype = "dotted"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+# Load required libraries
+if (!requireNamespace("ggplot2")) install.packages("ggplot2")
+
+library(ggplot2)
+
+# Example data for Seasonal Index
+seasonal_data <- data.frame(
+  Month = 1:12,  # Ensure months are numeric from 1 to 12
+  Seasonal_Index = c(0.4, 0.3, 0.5, 0.6, 0.8, 0.9, 0.9, 1.2, 1.8, 0.7, 1.6, 1.8)  # Updated seasonal indices
+)
+
+# Create the line plot with points
+ggplot(seasonal_data, aes(x = Month, y = Seasonal_Index)) +
+  geom_line(color = "#3288BD", size = 1) +  # Line for seasonal index
+  geom_point(color = "#3288BD", size = 3) + # Points on the line
+  geom_hline(yintercept = 1, color = "#FDDA0D", linetype = "dashed", size = 1) +  # Reference line at 1
+  labs(
+    title = "Seasonal Index by Month",
+    x = "Month",
+    y = "Seasonal Index"
+  ) +
+  scale_x_continuous(breaks = 1:12) +  # Ensure proper x-axis labeling for months
+  scale_y_continuous(limits = c(0.2, 1.8), breaks = seq(0.2, 1.8, by = 0.2)) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    axis.text.x = element_text(color = "black", size = 12),
+    axis.text.y = element_text(color = "black", size = 12),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    panel.grid.major = element_line(color = "gray80", linetype = "dotted"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+
+```{r}
+# Corrected URL to access the raw data
+url <- 'https://raw.githubusercontent.com/WinNatch/Programming-Analytics-/main/Region_Latitude_Longitude.csv'
+
+# Read the CSV file with appropriate encoding to handle special characters
+long_la_data <- read_csv(url, locale = locale(encoding = "ISO-8859-1"))
+
+# View the loaded data
+print(long_la_data)
+```
+
+
+
+
+```{r}
+# Example dataset
+set.seed(123)
+df <- data.frame(
+  Gender = sample(c("Male", "Female"), 100, replace = TRUE)
+)
+
+# Define a custom color palette for genders
+custom_palette <- c("Male" = "turquoise", "Female" = "coral")
+
+# Count the gender distribution
+gender_counts <- df %>%
+  count(Gender)
+
+# Create a pie chart
+ggplot(gender_counts, aes(x = "", y = n, fill = Gender)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +  # Convert bar chart to pie chart
+  scale_fill_manual(values = custom_palette) +  # Apply custom color palette
+  labs(
+    title = "Gender Distribution",
+    fill = "Gender"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    panel.grid = element_blank(),
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+```
+
+```{r}
+head(df,3)
+```
+
+
+
+```{r}
+# Install required libraries if not already installed
+if (!requireNamespace("ggplot2")) install.packages("ggplot2")
+if (!requireNamespace("scales")) install.packages("scales")
+
+# Load libraries
+library(ggplot2)
+library(scales)
+
+# Example dataset
+set.seed(123)
+df <- data.frame(
+  `Price ($)` = rnorm(500, mean = 50000, sd = 20000),
+  `Annual Income` = rnorm(500, mean = 100000, sd = 50000),
+  Transmission = sample(c("Automatic", "Manual"), 500, replace = TRUE)
+)
+
+# Create scatter plot with density overlays
+if (!requireNamespace("ggplot2")) install.packages("ggplot2")
+if (!requireNamespace("scales")) install.packages("scales")
+if (!requireNamespace("viridis")) install.packages("viridis")
+
+# Load libraries
+library(ggplot2)
+library(scales)
+
+
+# Example dataset
+set.seed(123)
+df <- data.frame(
+  Price = rnorm(500, mean = 50000, sd = 20000),
+  `Annual Income` = rnorm(500, mean = 100000, sd = 50000),
+  Transmission = sample(c("Automatic", "Manual"), 500, replace = TRUE)
+)
+
+# Alternative scatter plot with density contours
+ggplot(df, aes(x = Price, y = `Annual Income`, color = Transmission)) +
+  geom_point(size = 2.5, alpha = 0.7) +  # Scatter plot points
+  stat_density_2d(aes(fill = ..level..), geom = "polygon", alpha = 0.3) +  # Filled density contours
+  scale_color_manual(values = c("Automatic" = "steelblue", "Manual" = "darkorange")) +  # Custom colors for points
+  scale_fill_viridis_c(option = "C", guide = "none") +  # Color gradient for density fill
+  scale_x_continuous(labels = scales::comma) +  # Format x-axis labels
+  scale_y_continuous(labels = scales::comma) +  # Format y-axis labels
+  labs(
+    x = "Price ($)",
+    y = "Annual Income",
+    title = "Price vs Annual Income by Transmission",
+    color = "Transmission"
+  ) +
+  theme_light(base_size = 14) +  # Use a light theme
+  theme(
+    legend.position = "top",  # Move legend to the top
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),  # Centered title
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 12)
+  )
+```
+
+
+
+```{r}
+head(df,3)
+```
+
+
+```{r}
+p2 <- ggplot(df, aes(x = Price...., y = Body.Style, fill = Body.Style)) +
+  geom_boxplot(width = 0.7, outlier.color = "red") +
+  scale_fill_manual(values = c("blue", "dodgerblue", "cyan4", "limegreen", "chartreuse")) +
+  labs(title = "Price by Body Style", x = "Price", y = "Body Style") +
+  theme_minimal(base_size = 14)
+
+print(p2)
+```
+
+```{r}
+top_20_models <- df %>%
+  count(Model, sort = TRUE) %>%
+  head(20) %>%
+  arrange(n)
+mean_model_count <- mean(top_20_models$n)
+p4 <- ggplot(top_20_models, aes(x = reorder(Model, n), y = n)) +
+  geom_bar(stat = "identity", fill = "firebrick1", color = "black") +
+  geom_hline(yintercept = mean_model_count, linetype = "dashed", color = "red", size = 0.7) +
+  annotate("text", x = 5, y = mean_model_count + 2, label = sprintf("Mean = %.2f", mean_model_count), color = "grey") +
+  labs(title = "Top 20 Models by Count", x = "Model", y = "Count") +
+  coord_flip() +
+  theme_minimal(base_size = 14)
+
+print(p4)
+```
+
+```{r}
+color_body_counts <- df %>%
+  count(Color, Body.Style) %>%
+  spread(Body.Style, n, fill = 0)
+p5 <- ggplot(df, aes(x = Color, fill = Body.Style)) +
+  geom_bar(position = "stack", width = 0.7) +
+  scale_fill_manual(values = c("orchid4", "orchid2", "plum1", "thistle2", "thistle1")) +
+  labs(title = "Vehicle Colors by Body Style", x = "Color", y = "Number of Vehicles") +
+  theme_minimal(base_size = 14)
+
+print(p5)
+```
+
+
+
+
+```{r}
+# Install required libraries if not already installed
+if (!requireNamespace("ggplot2")) install.packages("ggplot2")
+if (!requireNamespace("scales")) install.packages("scales")
+
+# Load libraries
+library(ggplot2)
+library(scales)
+
+# Example dataset
+set.seed(123)
+df <- data.frame(
+  `Annual Income` = rnorm(10000, mean = 600000, sd = 300000)  # Simulated income data
+)
+
+# Create the histogram with trend line and easier-to-read x-axis
+ggplot(df, aes(x = `Annual.Income`)) +
+  geom_histogram(
+    bins = 295,  # Number of bins
+    color = "black", fill = "skyblue", alpha = 0.7  # Histogram color and transparency
+  ) +
+  geom_density(aes(y = ..count..), color = "blue", size = 1.2) +  # Trendline
+  labs(
+    title = "Annual Income Distribution",
+    x = "Annual Income (10 Millions)",
+    y = "Count"
+  ) +
+  scale_x_continuous(
+    limits = c(0, 11200000),  # Set x-axis limits
+    breaks = seq(0, 11200000, by = 1000000),  # Tick intervals of 1,000,000
+    labels = scales::comma  # Format labels with commas
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels for better readability
+    plot.title = element_text(size = 16, face = "bold"),  # Customize title
+    panel.grid.major.x = element_line(color = "gray80", linetype = "dotted")  # Add gridlines
+  )
+```
+
+
+```{r}
+# Install required libraries if not already installed
+if (!requireNamespace("ggplot2")) install.packages("ggplot2")
+if (!requireNamespace("scales")) install.packages("scales")
+
+# Load libraries
+library(ggplot2)
+library(scales)
+
+# Example dataset
+set.seed(123)
+df <- data.frame(
+  `Annual Income` = rnorm(10000, mean = 600000, sd = 300000)  # Simulated income data
+)
+
+# Create the histogram with a focus on 1 to 1,500,000
+ggplot(df, aes(x = `Annual.Income`)) +
+  geom_histogram(
+    bins = 50,  # Adjust number of bins for the focused range
+    color = "black", fill = "skyblue", alpha = 0.7  # Histogram color and transparency
+  ) +
+  geom_density(aes(y = ..count..), color = "blue", size = 1.2) +  # Trendline
+  labs(
+    title = "Annual Income Distribution (Focused Range)",
+    x = "Annual Income (10 Millions)",
+    y = "Count"
+  ) +
+  scale_x_continuous(
+    limits = c(0, 1500000),  # Set focus range on the x-axis
+    breaks = seq(0, 1500000, by = 100000),  # Tick intervals of 100,000
+    labels = scales::comma  # Format labels with commas
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels for better readability
+    plot.title = element_text(size = 16, face = "bold"),  # Customize title
+    panel.grid.major.x = element_line(color = "gray80", linetype = "dotted")  # Add gridlines
+  )
+```
+
+
+
+```{r}
+# Install required libraries if not already installed
+if (!requireNamespace("ggplot2")) install.packages("ggplot2")
+if (!requireNamespace("dplyr")) install.packages("dplyr")
+
+# Load libraries
+library(ggplot2)
+library(dplyr)
+
+# Example dataset
+set.seed(123)
+df <- data.frame(
+  Company = sample(
+    c("Chevrolet", "Dodge", "Ford", "Volkswagen", "Mercedes-B", "Mitsubishi", 
+      "Chrysler", "Oldsmobile", "Toyota", "Nissan", "Mercury", "Lexus", 
+      "Pontiac", "BMW", "Volvo", "Honda", "Acura", "Cadillac", "Plymouth", 
+      "Saturn"),
+    500,
+    replace = TRUE
+  )
+)
+
+# Get the order of companies based on their frequency
+company_order <- df %>%
+  count(Company) %>%
+  arrange(desc(n)) %>%
+  pull(Company)
+
+# Create the horizontal bar chart with a single turquoise color
+ggplot(df, aes(y = Company, fill = Company)) +
+  geom_bar(fill = "turquoise") +  # Set all bars to turquoise color
+  scale_y_discrete(limits = company_order) +  # Order companies by frequency
+  labs(
+    title = "Brand Sold Ranking",
+    x = "Count",
+    y = "Company"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.9),  # Centered title
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    legend.position = "none"  # Hide legend
+  )
+```
+```{r}
+head(df,5)
+```
+
+
+
+
+
+```{r}
+# Install required libraries if not already installed
+if (!requireNamespace("ggplot2")) install.packages("ggplot2")
+
+# Load library
+library(ggplot2)
+
+# Example dataset
+set.seed(123)
+df <- data.frame(
+  `Price ($)` = rnorm(500, mean = 30000, sd = 10000),
+  `Body Style` = sample(c("Sedan", "SUV", "Truck", "Coupe", "Convertible"), 500, replace = TRUE)
+)
+
+# Create the boxplot
+ggplot(df, aes(x = `Price`, y = `Body Style`, fill = `Body Style`)) +
+  geom_boxplot(width = 0.3, outlier.color = "red", outlier.shape = 16) +
+  scale_fill_manual(values = c("blue", "red", "green", "purple", "orange")) +  # Custom palette
+  labs(
+    title = "Price by Body Style",
+    x = "Price ($)",
+    y = "Body Style"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),  # Centered title
+    axis.text.y = element_text(size = 12),
+    axis.text.x = element_text(size = 12),
+    legend.position = "none"  # Hide legend
+  )
+```
+
+
+
+
+```{r}
+if (!requireNamespace("ggplot2")) install.packages("ggplot2")
+if (!requireNamespace("dplyr")) install.packages("dplyr")
+
+# Load libraries
+library(ggplot2)
+library(dplyr)
+
+# Example dataset
+set.seed(123)
+df <- data.frame(
+  Company = sample(
+    c("Chevrolet", "Dodge", "Ford", "Volkswagen", "Mercedes-B", "Mitsubishi", "Chrysler", "Oldsmobile", "Toyota", "Nissan"),
+    500,
+    replace = TRUE
+  )
+)
+
+# Get the order of companies based on their frequency
+company_order <- df %>%
+  count(Company) %>%
+  arrange(desc(n)) %>%
+  pull(Company)
+
+# Create the horizontal bar chart
+ggplot(df, aes(y = Company, fill = Company)) +
+  geom_bar() +
+  scale_y_discrete(limits = company_order) +  # Order companies by frequency
+  scale_fill_manual(values = scales::brewer_pal(palette = 'Spectral')(length(unique(df$Company)))) +  # Custom color palette
+  labs(
+    title = "Top Brand Sold Ranking",
+    x = "Count",
+    y = "Company"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),  # Centered title
+    axis.text.y = element_text(size = 8),
+    axis.text.x = element_text(size = 8),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    legend.position = "none"  # Hide legend
+  )
+```
+
+```{r}
+# Load required library
+if (!requireNamespace("ggplot2")) install.packages("ggplot2")
+library(ggplot2)
+
+# Create a data frame for Gender distribution
+gender_data <- data.frame(
+  Gender = c("Female", "Male"),
+  Percentage = c(21.4, 78.6)
+)
+
+# Create the pie chart
+ggplot(gender_data, aes(x = "", y = Percentage, fill = Gender)) +
+  geom_bar(stat = "identity", width = 1) +  # Create a bar chart to convert into a pie chart
+  coord_polar(theta = "y") +  # Convert to a pie chart
+  scale_fill_manual(values = c("salmon", "turquoise")) +  # Assign custom colors
+  labs(
+    title = "Gender Distribution",
+    fill = "Gender"
+  ) +
+  geom_text(aes(label = paste0(Percentage, "%")), position = position_stack(vjust = 0.5), size = 5) +  # Add percentage labels
+  theme_void() +  # Remove unnecessary gridlines and axes
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),  # Centered and bold title
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )
+```
+
+
+
